@@ -5,6 +5,11 @@
    - Платформа: Android (Kotlin, Jetpack Compose, Material 3).
    - Файл реалізації: `mobile/app/src/main/java/com/example/focusstudy/MainActivity.kt`.
    - Мережевий шар: `RetrofitClient` на базі Retrofit 2, OkHttp (таймаути 60 с) та Gson.
+
+### Локальне сховище (Mobile)
+* `HistoryStorage.kt` — ізольований від UI клас для збереження історії успішних Pomodoro-планів у `SharedPreferences` (`focus_study_history`) у форматі JSON через `Gson`.
+* Дані зберігаються виключно після валідної відповіді `200 OK` від сервера та відображаються на екранах «Історія» й «Деталі плану».
+
 2. **Backend Server (`backend/`):**
    - Платформа: Python 3, FastAPI, Uvicorn.
    - Файл реалізації: `backend/main.py`.
