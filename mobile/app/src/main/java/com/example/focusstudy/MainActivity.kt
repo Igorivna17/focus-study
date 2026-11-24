@@ -27,7 +27,8 @@ import java.util.concurrent.TimeUnit
 // --- Моделі даних (відповідають схемі FastAPI) ---
 data class PlanRequest(
     val topic: String,
-    val available_minutes: Int
+    val available_minutes: Int,
+    val difficulty: String = "medium"
 )
 
 data class PomodoroInterval(
@@ -92,9 +93,16 @@ class MainActivity : ComponentActivity() {
 fun FocusStudyScreen() {
     var topic by remember { mutableStateOf("") }
     var minutesText by remember { mutableStateOf("60") }
+    var selectedDifficulty by remember { mutableStateOf("medium") }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var planResult by remember { mutableStateOf<PlanResponse?>(null) }
+
+    val difficultyOptions = listOf(
+        "easy" to "Легкий",
+        "medium" to "Середній",
+        "hard" to "Інтенсивний"
+    )
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -134,6 +142,24 @@ fun FocusStudyScreen() {
                 singleLine = true
             )
 
+            Text(
+                text = "Інтенсивність підготовки:",
+                style = MaterialTheme.typography.labelLarge
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                difficultyOptions.forEach { (key, label) ->
+                    FilterChip(
+                        selected = selectedDifficulty == key,
+                        onClick = { selectedDifficulty = key },
+                        label = { Text(label) }
+                    )
+                }
+            }
+
             Button(
                 onClick = {
                     val trimmedTopic = topic.trim()
@@ -155,7 +181,11 @@ fun FocusStudyScreen() {
                     coroutineScope.launch {
                         try {
                             val response = RetrofitClient.api.generatePlan(
-                                PlanRequest(topic = trimmedTopic, available_minutes = minutes)
+                                PlanRequest(
+                                    topic = trimmedTopic,
+                                    available_minutes = minutes,
+                                    difficulty = selectedDifficulty
+                                )
                             )
                             planResult = response
                         } catch (e: Exception) {
