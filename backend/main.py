@@ -1,6 +1,6 @@
 import os
 import time
-from typing import List
+from typing import List, Literal
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -10,11 +10,18 @@ from google.genai import types
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 
-app = FastAPI(title="FocusStudy API", version="1.0.0")
+app = FastAPI(title="FocusStudy API", version="1.1.0")
+
+DIFFICULTY_DESCRIPTIONS = {
+    "easy": "легкий оглядовий темп (базові поняття, прості приклади, без перевантаження)",
+    "medium": "збалансований стандартний темп (теорія + типові практичні задачі)",
+    "hard": "інтенсивна поглиблена підготовка (складні кейси, активне тестування та самоперевірка)"
+}
 
 class PlanRequest(BaseModel):
     topic: str = Field(..., min_length=3, max_length=120)
     available_minutes: int = Field(..., ge=25, le=300)
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
 
 class PomodoroInterval(BaseModel):
     step_number: int
@@ -47,6 +54,8 @@ def generate_study_plan(request: PlanRequest):
             detail="API ключ не знайдено у .env"
         )
 
+    difficulty_hint = DIFFICULTY_DESCRIPTIONS[request.difficulty]
+
     client = genai.Client(
         api_key=API_KEY,
         http_options=types.HttpOptions(timeout=15000)
@@ -55,14 +64,15 @@ def generate_study_plan(request: PlanRequest):
     Розбий навчальну тему на Pomodoro-інтервали по 25 хвилин.
     Тема: "{clean_topic}"
     Загальний час: {request.available_minutes} хвилин.
+    Рівень інтенсивності: {request.difficulty} — {difficulty_hint}.
     Порахуй, скільки 25-хвилинних інтервалів уміщається (з урахуванням 5-хвилинних перерв між ними, мінімум 1 інтервал).
+    Адаптуй складність завдань під обраний рівень інтенсивності.
     Поверни чіткий українськомовний план.
     """
 
-    # 3 швидкі спроби звернутися до актуальної моделі gemini-3.8-flash
     for attempt in range(1, 4):
         try:
-            print(f"Спроба {attempt}: запит до gemini-3.8-flash...")
+            print(f"Спроба {attempt}: запит до gemini-3.8-flash (рівень: {request.difficulty})...")
             response = client.models.generate_content(
                 model="gemini-3.8-flash",
                 contents=prompt,
@@ -78,14 +88,28 @@ def generate_study_plan(request: PlanRequest):
             print(f"Спроба {attempt} не вдалася (перевантаження API):", repr(e))
             time.sleep(1)
 
-    # Graceful fallback: якщо Google AI тимчасово перевантажений (503), повертаємо структурований план локально
-    print("Активовано резервну генерацію плану (Graceful Fallback).")
+    print(f"Активовано резервну генерацію плану (Graceful Fallback, рівень: {request.difficulty}).")
     count = max(1, request.available_minutes // 30)
-    step_templates = [
-        ("Огляд теорії та базових понять", "Систематизація ключових визначень, формул та правил по темі без відволікань."),
-        ("Практичне закріплення матеріалу", "Розв'язання типових задач, прикладів або тестів для перевірки розуміння."),
-        ("Повторення складних моментів", "Аналіз помилок, складання коротких тез та фінальна самоперевірка."),
-    ]
+
+    fallback_by_difficulty = {
+        "easy": [
+            ("Легке знайомство з темою", "Спокійне читання конспекту та виділення головних тез без зазубрювання."),
+            ("Базові приклади", "Розгляд 2–3 найпростіших прикладів для загального розуміння."),
+            ("Коротке підбиття підсумків", "Усне повторення основних термінів своїми словами."),
+        ],
+        "medium": [
+            ("Огляд теорії та базових понять", "Систематизація ключових визначень, формул та правил по темі без відволікань."),
+            ("Практичне закріплення матеріалу", "Розв'язання типових задач, прикладів або тестів для перевірки розуміння."),
+            ("Повторення складних моментів", "Аналіз помилок, складання коротких тез та фінальна самоперевірка."),
+        ],
+        "hard": [
+            ("Глибокий аналіз теорії та винятків", "Детальний розбір складних аспектів, доведень та граничних випадків теми."),
+            ("Інтенсивний практикум підвищеної складності", "Розв'язання нестандартних задач у режимі обмеженого часу без підказок."),
+            ("Стрес-тест та робота над помилками", "Повна самоперевірка за екзаменаційними питаннями та усунення прогалин."),
+        ]
+    }
+
+    step_templates = fallback_by_difficulty[request.difficulty]
     fallback_intervals = []
     for i in range(count):
         title_base, desc = step_templates[i % len(step_templates)]
@@ -98,9 +122,15 @@ def generate_study_plan(request: PlanRequest):
             )
         )
 
+    break_tips = {
+        "easy": "Зроби легку 5-хвилинну перерву: потягнися, випий чаю та відпочинь від екрана.",
+        "medium": "Зроби 5-хвилинну перерву: відійди від монітора, потягнися та випий води.",
+        "hard": "Обов'язково відійди від робочого місця на 5 хвилин: зроби розминку для очей та спини після інтенсивної роботи."
+    }
+
     return PlanResponse(
         topic=clean_topic,
         total_pomodoros=count,
         intervals=fallback_intervals,
-        break_tip="Зроби 5-хвилинну перерву: відійди від монітора, потягнися та випий води."
+        break_tip=break_tips[request.difficulty]
     )
