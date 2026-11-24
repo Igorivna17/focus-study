@@ -2,20 +2,38 @@
 
 **FocusStudy** — це мобільний застосунок для Android (Kotlin, Jetpack Compose) із серверною частиною на Python (FastAPI) та інтеграцією Google Gemini AI (`gemini-3.8-flash`), який автоматично розбиває будь-яку навчальну тему на структуровані 25-хвилинні Pomodoro-інтервали з урахуванням бажаної інтенсивності підготовки, зберігає історію планів локально на пристрої та надає рекомендації для перерв.
 
+> **Архітектурний профіль (Лабораторна робота 5):** виконано **Варіант Б (FastAPI Backend Architecture)** — декомпозиція сценарію генерації навчального плану (`POST /api/plan`) на шари `core`, `domain`, `infrastructure`, `services` та `api` з Dependency Injection (`FastAPI Depends`), інтерфейсом `PlanProvider` (`GeminiPlanProvider` / `MockPlanProvider`) та наскрізним трасуванням `X-Request-ID`.
+
 ---
 
 ## Архітектура та структура репозиторію
 
     FocusStudy-MVP/
     ├── backend/
-    │   ├── main.py              # FastAPI сервер, інтеграція Gemini AI та Graceful Fallback
-    │   ├── test_main.py         # Автоматизовані тести (pytest)
-    │   └── requirements.txt     # Залежності Python
+    │   ├── app/
+    │   │   ├── core/
+    │   │   │   └── config.py            # Централізована конфігурація (Settings)
+    │   │   ├── domain/
+    │   │   │   ├── models.py            # Чисті доменні моделі (PlanCriteria, StudyPlan, PlanStep)
+    │   │   │   ├── errors.py            # Доменні винятки без прив'язки до HTTP
+    │   │   │   └── interfaces.py        # Інтерфейс PlanProvider (Protocol)
+    │   │   ├── infrastructure/
+    │   │   │   ├── gemini_provider.py   # RealProvider (адаптер Google GenAI SDK)
+    │   │   │   └── mock_provider.py     # MockProvider (тестування без мережі та fallback)
+    │   │   ├── services/
+    │   │   │   └── plan_service.py      # Прикладна бізнес-логіка та fallback-перемикання
+    │   │   └── api/
+    │   │       ├── schemas.py           # Pydantic-схеми запиту/відповіді
+    │   │       ├── dependencies.py      # Composition Root та DI через FastAPI Depends
+    │   │       └── error_handlers.py    # Централізований мапінг доменних помилок у HTTP
+    │   ├── main.py                      # Тонкий HTTP-роутер та middleware X-Request-ID
+    │   ├── test_main.py                 # Автоматизовані тести без мережі (pytest)
+    │   └── requirements.txt             # Залежності Python
     ├── mobile/
     │   └── app/src/main/java/com/example/focusstudy/
-    │       ├── MainActivity.kt      # Android UI (Jetpack Compose) та Retrofit клієнт
-    │       └── HistoryStorage.kt    # Локальне сховище історії запитів (SharedPreferences + Gson)
-    ├── docs/                    # Knowledge Base проєкту (8 документів специфікації)
+    │       ├── MainActivity.kt          # Android UI (Jetpack Compose) та Retrofit клієнт
+    │       └── HistoryStorage.kt        # Локальне сховище історії запитів (SharedPreferences + Gson)
+    ├── docs/                            # Knowledge Base проєкту (8 документів специфікації)
     │   ├── project-overview.md
     │   ├── requirements.md
     │   ├── architecture.md
@@ -24,18 +42,18 @@
     │   ├── testing.md
     │   ├── known-limitations.md
     │   └── decisions.md
-    ├── ai-instructions.md       # Правила роботи coding agent із репозиторієм
-    └── README.md                # Документація проєкту та інструкції запуску
+    ├── ai-instructions.md               # Правила роботи coding agent із репозиторієм
+    └── README.md                        # Документація проєкту та інструкції запуску
 
 ---
 
 ## Стек технологій
 
+* **Backend:** Python 3.10+, FastAPI, Pydantic, Uvicorn (багатошарова модульна архітектура з DI через `Depends`).
+* **AI-компонент:** Google GenAI SDK (`gemini-3.8-flash`) за інтерфейсом `PlanProvider` зі структурованим виводом (`response_schema`) та контрольованим перемиканням на резервний `MockPlanProvider`.
 * **Mobile:** Android (min SDK 24 / target SDK 35+), Kotlin, Jetpack Compose (Material 3), Retrofit, OkHttp, Gson.
 * **Локальне збереження (Mobile):** `SharedPreferences` + JSON-серіалізація (`HistoryStorage.kt`).
-* **Backend:** Python 3.10+, FastAPI, Pydantic, Uvicorn.
-* **AI-компонент:** Google GenAI SDK (`gemini-3.8-flash`) зі структурованим виводом (`response_schema`) та резервним локальним генератором (*Graceful Fallback*).
-* **Тестування:** `pytest`, `httpx`.
+* **Тестування:** `pytest`, `httpx`, `FastAPI TestClient` із підміною залежностей (`app.dependency_overrides`).
 
 ---
 
@@ -50,17 +68,18 @@
        pip install -r requirements.txt
 3. Створіть файл `backend/.env` (ігнорується Git) та вкажіть ключ:
        GEMINI_API_KEY=ваш_ключ_від_google_ai_studio
+   *(Опціонально можна задати `USE_MOCK_PROVIDER=true` для запуску сервера в офлайн-режимі без зовнішнього API).*
 4. Запустіть сервер:
        uvicorn main:app --host 0.0.0.0 --port 8000
    Сервер працює на `http://localhost:8000`, Swagger UI — `http://localhost:8000/docs`.
 
-### 2. Запуск автотестів (Backend)
+### 2. Запуск автотестів без зовнішньої мережі (Backend)
 У директорії `backend/` з активованим `venv`:
 
     pytest -v
 
 ### 3. Запуск Mobile (Android Studio)
-1. Відкрийте папку `mobile/` в Android Studio та дочекайтеся синхронізації Gradle.
+1. Відкрийте папку `mobile/` в Android Studio та дочейтеся синхронізації Gradle.
 2. Запустіть Android Emulator та прокиньте локальний порт комп'ютера на емулятор:
        adb reverse tcp:8000 tcp:8000
    *(Якщо `adb` не додано до `PATH` у Windows: `& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" reverse tcp:8000 tcp:8000`)*
@@ -68,11 +87,11 @@
 
 ---
 
-## Опис API (`v1.1.0`)
+## Опис API (`v2.0.0`)
 
 Детальний контракт описано у [`docs/api-contract.md`](docs/api-contract.md).
 
-* **`GET /health`** — перевірка стану сервера (`200 OK`, повертає `{"status": "ok", "service": "FocusStudy Backend"}`).
+* **`GET /health`** — перевірка стану сервера (`200 OK`, повертає `{"status": "ok", "service": "FocusStudy Backend", "version": "2.0.0"}`).
 * **`POST /api/plan`** — приймає JSON:
       {
         "topic": "Комп'ютерні мережі",
@@ -82,7 +101,8 @@
   * `topic` — рядок від 3 до 120 символів (обов'язково).
   * `available_minutes` — ціле число від 25 до 300 хвилин (обов'язково).
   * `difficulty` — рівень інтенсивності підготовки: `"easy"`, `"medium"` або `"hard"` (опціонально, за замовчуванням `"medium"`).
-  * Повертає структурований Pomodoro-план (`200 OK`) або помилку валідації (`422 Unprocessable Entity`).
+  * Повертає структурований Pomodoro-план (`200 OK`), помилку доменної валідації (`422 Unprocessable Entity`) або контрольовану помилку недоступності провайдера (`502 Bad Gateway`).
+* Усі відповіді сервера містять заголовок наскрізного трасування **`X-Request-ID`** (генерується автоматично у форматі UUID або прокидається із заголовка запиту).
 
 ---
 
@@ -99,7 +119,6 @@
 * **Поведінка та життєвий цикл:**
   * У локальну історію зберігаються **виключно успішні** відповіді сервера (`200 OK`); мережеві помилки та некоректні відповіді не записуються.
   * На вкладці **«Історія»** записи відображаються у зворотному хронологічному порядку (новіші зверху), передбачено стан порожньої історії, перегляд деталей плану та видалення запису чи очищення всієї історії з підтвердженням.
-  * Усі збережені плани залишаються доступними після повного закриття й повторного запуску застосунку.
 
 ---
 

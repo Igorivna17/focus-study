@@ -16,6 +16,18 @@
    - Відповідає за валідацію запитів, формування промпту, виклик Google Gemini API та резервну генерацію.
 3. **AI Service (зовнішній):**
    - Google Gemini API (`gemini-3.8-flash`) через офіційний SDK `google-genai`.
+   
+### Модульна архітектура Backend (Варіант Б, v2.0.0)
+Серверну частину (`backend/`) реорганізовано з монолітного `main.py` у багатошарову структуру з чітким розділенням відповідальностей:
+* **`app/core/config.py`** — централізована конфігурація (`Settings`: `GEMINI_API_KEY`, модель, таймаути, прапорець `USE_MOCK_PROVIDER`).
+* **`app/domain/`** — моделі предметної області (`PlanCriteria`, `StudyPlan`, `PlanStep`), доменні винятки (`InvalidPlanCriteriaError`, `ProviderUnavailableError`) та інтерфейс постачальника планів `PlanProvider` (`Protocol`).
+* **`app/infrastructure/`** — дві взаємозамінні реалізації `PlanProvider`:
+  * `GeminiPlanProvider` — адаптер зовнішнього Google GenAI SDK (`gemini-3.8-flash`);
+  * `MockPlanProvider` — детермінована локальна реалізація для тестування без мережі та резервного режиму (*fallback*).
+* **`app/services/plan_service.py`** — прикладна бізнес-логіка побудови плану та перемикання на `fallback_provider` у разі недоступності основного AI-провайдера.
+* **`app/api/` та `main.py`** — тонкий HTTP-роутер, Pydantic-схеми запиту/відповіді, впровадження залежностей через `FastAPI Depends` (`dependencies.py`), централізований мапінг доменних помилок у HTTP-статуси (`error_handlers.py`) та middleware наскрізного трасування заголовка `X-Request-ID`.
+
+
 
 ## Потік даних (Data Flow)
 1. Користувач заповнює форму в `FocusStudyScreen` (`MainActivity.kt`).
