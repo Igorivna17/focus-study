@@ -39,3 +39,30 @@ FocusStudy — Pomodoro mobile app for students.
 * **Архітектура:** MVVM (Model-View-ViewModel)
 * **Локальне збереження:** DataStore / Room
 * **Середовище розробки:** Android Studio
+
+
+--- Лаб 2
+
+## Архітектура та структура репозиторію (MVP)
+- `backend/` — REST API сервер на Python (FastAPI, Pydantic, Google GenAI SDK).
+- `mobile/` — нативний Android-застосунок на Kotlin (Jetpack Compose, Retrofit, OkHttp).
+
+## Команди запуску
+
+### 1. Запуск Backend (Python FastAPI)
+1. Перейдіть у папку `backend/`, створіть та активуйте віртуальне середовище `venv`, встановіть залежності: `pip install -r requirements.txt`
+2. Створіть файл `backend/.env` із параметром `GEMINI_API_KEY=ваш_ключ`
+3. Запустіть сервер: `uvicorn main:app --host 0.0.0.0 --port 8000` (Swagger UI: `http://localhost:8000/docs`)
+
+### 2. Запуск Mobile (Android Studio)
+1. Відкрийте папку `mobile/` в Android Studio та дочекайтеся синхронізації Gradle.
+2. Запустіть емулятор і прокиньте порт сервера: `adb reverse tcp:8000 tcp:8000`
+3. Натисніть **Run (▶)**.
+
+## Опис API та приклади AI-функції
+- `GET /health` — перевірка стану сервера (`200 OK`, повертає `{"status": "ok", "service": "FocusStudy Backend"}`).
+- `POST /api/plan` — приймає JSON `{"topic": "Назва теми", "available_minutes": 60}` і повертає структурований Pomodoro-план (`200 OK`) або помилку валідації (`422 Unprocessable Entity`). Використовує Google Gemini (`gemini-3.8-flash`) з резервним локальним генератором (*Graceful Fallback*).
+
+## Обмеження поточної версії (MVP)
+- Stateless-архітектура (історія згенерованих планів не зберігається у базі даних).
+- Відсутня авторизація користувачів.
