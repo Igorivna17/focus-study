@@ -19,6 +19,7 @@
 |---|---|---|---|
 | `topic` | `string` | Так | `min_length=3`, `max_length=120`, не лише пробіли |
 | `available_minutes` | `integer` | Так | `ge=25`, `le=300` |
+| `difficulty` | `string` | Ні (за замовч. `"medium"`) | Допустимі значення: `"easy"`, `"medium"`, `"hard"` |
 
 ### Response `200 OK` (`application/json`)
     {
