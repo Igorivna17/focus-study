@@ -135,3 +135,37 @@
 * **Обраний варіант:** Варіант А — розширення наявної AI-функції генерації Pomodoro-плану персоналізацією за навчальним контекстом (`study_context`) та обробкою непридатних запитів (`is_suitable` / `rejection_reason`).
 * **Модуль підготовки даних:** `backend/app/services/input_preparer.py` відокремлює очищення вводу, екстракцію акцентів і попередній фільтр непридатних тем від виклику моделі.
 * **Тестування:** `pytest -v` у директорії `backend/` виконує 10 автоматизованих тестів без звернення до зовнішньої мережі.
+
+# FocusStudy — Мобільний AI-планувальник навчальних сесій (Pomodoro)
+
+Мобільний Android-застосунок із клієнт-серверною архітектурою (Android Kotlin + Jetpack Compose + FastAPI + Google Gemini API), який допомагає студентам структурувати підготовку до занять, іспитів та лабораторних робіт у вигляді 25-хвилинних Pomodoro-інтервалів із урахуванням власного навчального контексту та збереженням історії.
+
+---
+
+## 1. Архітектура та структура репозиторію
+* **`mobile/`** — Android-клієнт (Kotlin, Jetpack Compose, Material 3, Retrofit2, Gson, SharedPreferences).
+* **`backend/`** — REST API сервер на Python (FastAPI, Pydantic v2, Google GenAI SDK), побудований за шаруватою архітектурою:
+  * `app/domain/` — доменні моделі (`PlanCriteria`, `StudyPlan`, `PlanStep`), інтерфейс `PlanProvider` та типізовані винятки;
+  * `app/services/` — прикладна бізнес-логіка (`PlanService` із fallback-механізмом) та модуль підготовки і фільтрації даних (`input_preparer.py`);
+  * `app/infrastructure/` — провайдери генерації планів (`GeminiPlanProvider` та резервний/тестовий `MockPlanProvider`);
+  * `app/api/` — HTTP-маршрути, схеми валідації запитів/відповідей та middleware трасування `X-Request-ID`.
+* **`docs/`** — технічна документація та база знань (`architecture.md`, `api-contract.md`, `ai-component.md`, `limitations.md`).
+* **`releases/`** — зібраний інсталяційний пакет `FocusStudy-v2.1.0-debug.apk`.
+
+---
+
+## 2. Вимоги до середовища
+* **Backend:** Python 3.11+ (перевірено на Python 3.15), `pip`, віртуальне середовище `venv`.
+* **Mobile:** Android Studio (Ladybug / Meerkat або новіша), JDK 17+, Android SDK (Compile SDK 35 / Min SDK 24), емулятор Android або фізичний смартфон на Android 8.0+.
+* **AI-провайдер:** API-ключ Google Gemini API (отримується у Google AI Studio: `https://aistudio.google.com/apikey`). Для офлайн-тестування без інтернету підтримується вбудований локальний провайдер `MockPlanProvider`.
+
+---
+
+## 3. Налаштування та запуск Backend
+
+1. Перейдіть у директорію `backend` та активуйте віртуальне середовище:
+   ```powershell
+   cd backend
+   python -m venv venv
+   .\venv\Scripts\activate
+   pip install -r requirements.txt
