@@ -11,30 +11,23 @@
       "service": "FocusStudy Backend"
     }
 
-## 2. `POST /api/plan`
-Генерація навчального Pomodoro-плану.
+### `POST /api/plan` (v2.1.0)
+Генерує персоналізований Pomodoro-план навчання або повертає контрольований стан відхилення, якщо запит не підходить для навчання.
 
-### Request Body (`application/json`)
-| Поле | Тип | Обов'язкове | Обмеження |
-|---|---|---|---|
-| `topic` | `string` | Так | `min_length=3`, `max_length=120`, не лише пробіли |
-| `available_minutes` | `integer` | Так | `ge=25`, `le=300` |
-| `difficulty` | `string` | Ні (за замовч. `"medium"`) | Допустимі значення: `"easy"`, `"medium"`, `"hard"` |
+**Тіло запиту (JSON):**
+* `topic` (`string`, обов'язково, 3–120 символів) — навчальна тема.
+* `available_minutes` (`integer`, обов'язково, 25–300) — доступний час навчання у хвилинах.
+* `difficulty` (`string`, опціонально, за замовчуванням `"medium"`) — рівень інтенсивності: `"easy"`, `"medium"`, `"hard"`.
+* `study_context` (`string | null`, опціонально, до 500 символів) — власні матеріали, конспект або фокус-ціль користувача для персоналізації кроків.
 
-### Response `200 OK` (`application/json`)
-    {
-      "topic": "екзамен з математики",
-      "total_pomodoros": 2,
-      "intervals": [
-        {
-          "step_number": 1,
-          "title": "Огляд теорії та базових понять",
-          "duration_minutes": 25,
-          "task_description": "Систематизація ключових визначень, формул та правил."
-        }
-      ],
-      "break_tip": "Зроби 5-хвилинну перерву: відійди від монітора, потягнися та випий води."
-    }
+**Відповідь `200 OK` (JSON):**
+* `topic` (`string`) — очищена навчальна тема.
+* `total_pomodoros` (`integer`) — кількість 25-хвилинних сетів (`0`, якщо `is_suitable == false`).
+* `intervals` (`array`) — список кроків Pomodoro-плану (порожній масив, якщо `is_suitable == false`).
+* `break_tip` (`string`) — порада для 5-хвилинної перерви.
+* `is_suitable` (`boolean`) — прапорець придатності теми для навчання.
+* `rejection_reason` (`string | null`) — пояснення причини, якщо запит відхилено як непридатний.
+* `context_applied` (`boolean`) — вказує, чи враховано додатковий навчальний контекст користувача при побудові плану.
 
 ### Коди помилок
 - `422 Unprocessable Entity` — порушення обмежень полів `topic` або `available_minutes`.

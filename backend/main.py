@@ -48,6 +48,7 @@ def create_plan(
         topic=payload.topic,
         available_minutes=payload.available_minutes,
         difficulty=payload.difficulty,
+        study_context=payload.study_context,
     )
     study_plan = service.create_study_plan(criteria)
 
@@ -64,4 +65,7 @@ def create_plan(
             for step in study_plan.intervals
         ],
         break_tip=study_plan.break_tip,
+        is_suitable=study_plan.is_suitable,
+        rejection_reason=study_plan.rejection_reason,
+        context_applied=study_plan.context_applied,
     )

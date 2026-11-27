@@ -18,6 +18,7 @@ class MockPlanProvider:
             raise ProviderUnavailableError("Mock AI provider simulated an outage.")
 
         pomodoros_count = max(1, min(12, criteria.available_minutes // 25))
+        has_context = bool(criteria.study_context and criteria.study_context.strip())
 
         step_templates = {
             "easy": (
@@ -34,17 +35,25 @@ class MockPlanProvider:
             ),
         }
 
-        title_prefix, description = step_templates[criteria.difficulty]
+        title_prefix, base_description = step_templates[criteria.difficulty]
 
-        steps = [
-            PlanStep(
-                step_number=i,
-                title=f"{title_prefix}: {criteria.topic} (етап {i})",
-                duration_minutes=25,
-                task_description=description,
+        steps: list[PlanStep] = []
+        for i in range(1, pomodoros_count + 1):
+            if has_context:
+                step_title = f"{title_prefix} (з урахуванням контексту): {criteria.topic} (етап {i})"
+                step_desc = f"{base_description} Фокус за матеріалами користувача: «{criteria.study_context}»."
+            else:
+                step_title = f"{title_prefix}: {criteria.topic} (етап {i})"
+                step_desc = base_description
+
+            steps.append(
+                PlanStep(
+                    step_number=i,
+                    title=step_title,
+                    duration_minutes=25,
+                    task_description=step_desc,
+                )
             )
-            for i in range(1, pomodoros_count + 1)
-        ]
 
         break_tips = {
             "easy": "Зроби легку 5-хвилинну перерву, випий води та трохи пройдися.",
@@ -58,4 +67,7 @@ class MockPlanProvider:
             intervals=steps,
             break_tip=break_tips[criteria.difficulty],
             provider_name=self.name,
+            is_suitable=True,
+            rejection_reason=None,
+            context_applied=has_context,
         )

@@ -1,13 +1,14 @@
 import logging
-from app.domain.errors import InvalidPlanCriteriaError, ProviderUnavailableError
+from app.domain.errors import ProviderUnavailableError
 from app.domain.interfaces import PlanProvider
 from app.domain.models import PlanCriteria, StudyPlan
+from app.services.input_preparer import prepare_plan_input
 
 logger = logging.getLogger("focusstudy.service")
 
 
 class PlanService:
-    """Прикладний сервіс побудови навчальних Pomodoro-планів."""
+    """Прикладний сервіс побудови навчальних Pomodoro-планів з підготовкою даних та fallback."""
 
     def __init__(
         self,
@@ -18,19 +19,29 @@ class PlanService:
         self._fallback_provider = fallback_provider
 
     def create_study_plan(self, criteria: PlanCriteria) -> StudyPlan:
-        cleaned_topic = criteria.topic.strip()
-        if len(cleaned_topic) < 3:
-            raise InvalidPlanCriteriaError("Тема навчання повинна містити щонайменше 3 непробільні символи.")
+        prepared = prepare_plan_input(criteria)
 
-        normalized_criteria = PlanCriteria(
-            topic=cleaned_topic,
-            available_minutes=criteria.available_minutes,
-            difficulty=criteria.difficulty,
-        )
+        if not prepared.is_suitable_for_study:
+            logger.info("Query rejected at input preparation stage: %s", prepared.unsuitable_reason)
+            return StudyPlan(
+                topic=prepared.criteria.topic,
+                total_pomodoros=0,
+                intervals=[],
+                break_tip="",
+                provider_name="rule-filter",
+                is_suitable=False,
+                rejection_reason=prepared.unsuitable_reason,
+                context_applied=False,
+            )
 
         try:
-            plan = self._primary_provider.generate_plan(normalized_criteria)
-            logger.info("Plan generated via primary provider: %s", self._primary_provider.name)
+            plan = self._primary_provider.generate_plan(prepared.criteria)
+            logger.info(
+                "Plan generated via primary provider: %s (context_applied=%s, suitable=%s)",
+                self._primary_provider.name,
+                plan.context_applied,
+                plan.is_suitable,
+            )
             return plan
         except ProviderUnavailableError as primary_err:
             logger.warning(
@@ -42,4 +53,4 @@ class PlanService:
                 raise
 
             logger.info("Switching to fallback provider: %s", self._fallback_provider.name)
-            return self._fallback_provider.generate_plan(normalized_criteria)
+            return self._fallback_provider.generate_plan(prepared.criteria)

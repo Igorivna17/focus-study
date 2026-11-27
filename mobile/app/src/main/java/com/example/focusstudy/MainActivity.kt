@@ -3,7 +3,6 @@ package com.example.focusstudy
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,7 +16,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.example.focusstudy.ui.theme.FocusStudyTheme
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
@@ -26,11 +24,13 @@ import retrofit2.http.Body
 import retrofit2.http.POST
 import java.util.concurrent.TimeUnit
 
-// --- Моделі даних (відповідають схемі FastAPI) ---
+// --- Моделі запиту та відповіді API (v2.1 — з підтримкою контексту та перевірки придатності) ---
+
 data class PlanRequest(
     val topic: String,
     val available_minutes: Int,
-    val difficulty: String = "medium"
+    val difficulty: String = "medium",
+    val study_context: String? = null
 )
 
 data class PomodoroInterval(
@@ -44,22 +44,26 @@ data class PlanResponse(
     val topic: String,
     val total_pomodoros: Int,
     val intervals: List<PomodoroInterval>,
-    val break_tip: String
+    val break_tip: String,
+    val is_suitable: Boolean = true,
+    val rejection_reason: String? = null,
+    val context_applied: Boolean = false
 )
 
-// --- API Клієнт ---
+// --- Retrofit інтерфейс ---
+
 interface FocusStudyApi {
-    @POST("/api/plan")
+    @POST("api/plan")
     suspend fun generatePlan(@Body request: PlanRequest): PlanResponse
 }
 
 object RetrofitClient {
-    private const val BASE_URL = "http://localhost:8000/"
+    private const val BASE_URL = "http://127.0.0.1:8000/"
 
     private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
         .build()
 
     val api: FocusStudyApi by lazy {
@@ -75,9 +79,8 @@ object RetrofitClient {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
         setContent {
-            FocusStudyTheme {
+            MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -93,32 +96,40 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun FocusStudyApp() {
     val context = LocalContext.current
-    val storage = remember { HistoryStorage(context) }
+    val historyStorage = remember { HistoryStorage(context) }
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0 = Планувальник, 1 = Історія
-    var historyRecords by remember { mutableStateOf(storage.getAllRecords()) }
-    var selectedRecordForDetails by remember { mutableStateOf<HistoryRecord?>(null) }
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedRecordId by remember { mutableStateOf<Long?>(null) }
+    var historyList by remember { mutableStateOf(historyStorage.getAllRecords()) }
+
+    val refreshHistory: () -> Unit = {
+        historyList = historyStorage.getAllRecords()
+    }
+
+    if (selectedRecordId != null) {
+        val record = remember(selectedRecordId, historyList) {
+            historyStorage.getRecordById(selectedRecordId!!)
+        }
+        if (record != null) {
+            HistoryDetailScreen(
+                record = record,
+                onBack = { selectedRecordId = null },
+                onDelete = {
+                    historyStorage.deleteRecord(record.id)
+                    refreshHistory()
+                    selectedRecordId = null
+                }
+            )
+            return
+        } else {
+            selectedRecordId = null
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        text = when {
-                            selectedRecordForDetails != null -> "Деталі плану"
-                            selectedTab == 0 -> "FocusStudy AI Планувальник"
-                            else -> "Історія запитів"
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = {
-                    if (selectedRecordForDetails != null) {
-                        TextButton(onClick = { selectedRecordForDetails = null }) {
-                            Text("← Назад", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                },
+                title = { Text("FocusStudy AI Планувальник") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -126,75 +137,65 @@ fun FocusStudyApp() {
             )
         },
         bottomBar = {
-            if (selectedRecordForDetails == null) {
-                NavigationBar {
-                    NavigationBarItem(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        icon = { Text("⏱") },
-                        label = { Text("Планувальник") }
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == 1,
-                        onClick = {
-                            historyRecords = storage.getAllRecords()
-                            selectedTab = 1
-                        },
-                        icon = { Text("📋") },
-                        label = { Text("Історія (${historyRecords.size})") }
-                    )
-                }
+            NavigationBar {
+                NavigationBarItem(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    icon = { Text("⏱") },
+                    label = { Text("Планувальник") }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 1,
+                    onClick = {
+                        refreshHistory()
+                        selectedTab = 1
+                    },
+                    icon = { Text("📋") },
+                    label = { Text("Історія (${historyList.size})") }
+                )
             }
         }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            when {
-                selectedRecordForDetails != null -> {
-                    HistoryDetailsScreen(record = selectedRecordForDetails!!)
-                }
-                selectedTab == 0 -> {
-                    PlannerScreen(
-                        onPlanSuccess = { topic, minutes, difficulty, plan ->
-                            storage.addRecord(topic, minutes, difficulty, plan)
-                            historyRecords = storage.getAllRecords()
-                        }
-                    )
-                }
-                else -> {
-                    HistoryListScreen(
-                        records = historyRecords,
-                        onOpenDetails = { record ->
-                            selectedRecordForDetails = storage.getRecordById(record.id)
-                        },
-                        onDeleteRecord = { id ->
-                            storage.deleteRecord(id)
-                            historyRecords = storage.getAllRecords()
-                        },
-                        onClearAll = {
-                            storage.clearAll()
-                            historyRecords = storage.getAllRecords()
-                        }
-                    )
-                }
+    ) { paddingValues ->
+        Box(modifier = Modifier.padding(paddingValues)) {
+            when (selectedTab) {
+                0 -> FocusStudyScreen(
+                    onPlanSaved = { topic, minutes, difficulty, plan ->
+                        historyStorage.addRecord(topic, minutes, difficulty, plan)
+                        refreshHistory()
+                    }
+                )
+                1 -> HistoryScreen(
+                    records = historyList,
+                    onRecordClick = { id -> selectedRecordId = id },
+                    onDeleteRecord = { id ->
+                        historyStorage.deleteRecord(id)
+                        refreshHistory()
+                    },
+                    onClearAll = {
+                        historyStorage.clearAll()
+                        refreshHistory()
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-fun PlannerScreen(
-    onPlanSuccess: (String, Int, String, PlanResponse) -> Unit
+fun FocusStudyScreen(
+    onPlanSaved: (String, Int, String, PlanResponse) -> Unit
 ) {
     var topic by remember { mutableStateOf("") }
-    var minutesText by remember { mutableStateOf("60") }
+    var minutesInput by remember { mutableStateOf("60") }
+    var studyContext by remember { mutableStateOf("") }
     var selectedDifficulty by remember { mutableStateOf("medium") }
+
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var unsuitableReason by remember { mutableStateOf<String?>(null) }
     var planResult by remember { mutableStateOf<PlanResponse?>(null) }
+
+    val coroutineScope = rememberCoroutineScope()
 
     val difficultyOptions = listOf(
         "easy" to "Легкий",
@@ -202,37 +203,43 @@ fun PlannerScreen(
         "hard" to "Інтенсивний"
     )
 
-    val coroutineScope = rememberCoroutineScope()
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         OutlinedTextField(
             value = topic,
             onValueChange = { topic = it },
             label = { Text("Навчальна тема (мін. 3 символи)") },
-            placeholder = { Text("Напр.: Підготовка до тесту з баз даних") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
         )
 
         OutlinedTextField(
-            value = minutesText,
-            onValueChange = { minutesText = it.filter { ch -> ch.isDigit() } },
+            value = minutesInput,
+            onValueChange = { minutesInput = it.filter { ch -> ch.isDigit() } },
             label = { Text("Доступний час у хвилинах (25–300)") },
+            singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = studyContext,
+            onValueChange = { if (it.length <= 500) studyContext = it },
+            label = { Text("Контекст / власний конспект (опціонально)") },
+            placeholder = { Text("Напр.: фокус на протоколах TCP/UDP та сокетах") },
+            minLines = 2,
+            maxLines = 3,
+            modifier = Modifier.fillMaxWidth()
         )
 
         Text(
             text = "Інтенсивність підготовки:",
             style = MaterialTheme.typography.labelLarge
         )
-
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -249,20 +256,24 @@ fun PlannerScreen(
         Button(
             onClick = {
                 val trimmedTopic = topic.trim()
-                val minutes = minutesText.toIntOrNull()
+                val minutes = minutesInput.toIntOrNull()
 
                 if (trimmedTopic.length < 3) {
                     errorMessage = "Введіть тему довжиною мінімум 3 символи"
+                    unsuitableReason = null
                     return@Button
                 }
-                if (minutes == null || minutes !in 25..300) {
-                    errorMessage = "Вкажіть час від 25 до 300 хвилин"
+                if (minutes == null || minutes < 25 || minutes > 300) {
+                    errorMessage = "Час має бути в межах від 25 до 300 хвилин"
+                    unsuitableReason = null
                     return@Button
                 }
 
                 errorMessage = null
-                planResult = null
+                unsuitableReason = null
                 isLoading = true
+
+                val trimmedContext = studyContext.trim().ifEmpty { null }
 
                 coroutineScope.launch {
                     try {
@@ -270,24 +281,28 @@ fun PlannerScreen(
                             PlanRequest(
                                 topic = trimmedTopic,
                                 available_minutes = minutes,
-                                difficulty = selectedDifficulty
+                                difficulty = selectedDifficulty,
+                                study_context = trimmedContext
                             )
                         )
-                        if (response.intervals.isNotEmpty()) {
-                            planResult = response
-                            onPlanSuccess(trimmedTopic, minutes, selectedDifficulty, response)
+                        if (!response.is_suitable) {
+                            planResult = null
+                            unsuitableReason = response.rejection_reason
+                                ?: "Запит не підходить для складання навчального Pomodoro-плану."
                         } else {
-                            errorMessage = "Отримано порожній план від сервера"
+                            planResult = response
+                            unsuitableReason = null
+                            onPlanSaved(trimmedTopic, minutes, selectedDifficulty, response)
                         }
                     } catch (e: Exception) {
-                        errorMessage = "Помилка з'єднання із сервером: перевірте запуск Backend"
+                        errorMessage = "Помилка з'єднання з сервером: ${e.localizedMessage ?: "Невідома помилка"}"
                     } finally {
                         isLoading = false
                     }
                 }
             },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !isLoading
+            enabled = !isLoading,
+            modifier = Modifier.fillMaxWidth()
         ) {
             Text(if (isLoading) "Генерація плану..." else "Скласти Pomodoro-план")
         }
@@ -296,23 +311,53 @@ fun PlannerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator()
             }
         }
 
-        errorMessage?.let { err ->
+        errorMessage?.let { msg ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = err,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.padding(12.dp)
-                )
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = msg,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+        }
+
+        unsuitableReason?.let { reason ->
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "Запит не підходить для навчання",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = reason,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            topic = ""
+                            unsuitableReason = null
+                        }
+                    ) {
+                        Text("Ввести іншу тему")
+                    }
+                }
             }
         }
 
@@ -323,144 +368,107 @@ fun PlannerScreen(
 }
 
 @Composable
-fun HistoryListScreen(
+fun HistoryScreen(
     records: List<HistoryRecord>,
-    onOpenDetails: (HistoryRecord) -> Unit,
+    onRecordClick: (Long) -> Unit,
     onDeleteRecord: (Long) -> Unit,
     onClearAll: () -> Unit
 ) {
-    var recordIdToDelete by remember { mutableStateOf<Long?>(null) }
-    var showClearAllDialog by remember { mutableStateOf(false) }
+    var showClearDialog by remember { mutableStateOf(false) }
 
-    if (recordIdToDelete != null) {
+    if (showClearDialog) {
         AlertDialog(
-            onDismissRequest = { recordIdToDelete = null },
-            title = { Text("Видалити запис?") },
-            text = { Text("Цей план буде видалено з локальної історії пристрою без можливості відновлення.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDeleteRecord(recordIdToDelete!!)
-                    recordIdToDelete = null
-                }) {
-                    Text("Видалити", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { recordIdToDelete = null }) {
-                    Text("Скасувати")
-                }
-            }
-        )
-    }
-
-    if (showClearAllDialog) {
-        AlertDialog(
-            onDismissRequest = { showClearAllDialog = false },
+            onDismissRequest = { showClearDialog = false },
             title = { Text("Очистити всю історію?") },
-            text = { Text("Усі збережені навчальні плани будуть видалені з пристрою.") },
+            text = { Text("Усі збережені навчальні плани буде видалено з пристрою без можливості відновлення.") },
             confirmButton = {
                 TextButton(onClick = {
                     onClearAll()
-                    showClearAllDialog = false
+                    showClearDialog = false
                 }) {
                     Text("Очистити", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showClearAllDialog = false }) {
+                TextButton(onClick = { showClearDialog = false }) {
                     Text("Скасувати")
                 }
             }
         )
     }
 
-    if (records.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            contentAlignment = Alignment.Center
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "Збережені плани (${records.size})",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            if (records.isNotEmpty()) {
+                TextButton(onClick = { showClearDialog = true }) {
+                    Text("Очистити все", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        if (records.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
-                    text = "Історія запитів порожня",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Створіть перший Pomodoro-план на вкладці «Планувальник» — він автоматично збережеться тут.",
+                    text = "Історія поки порожня.\nСтворіть перший навчальний план на вкладці «Планувальник»!",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-    } else {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Збережені плани (${records.size}):",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(onClick = { showClearAllDialog = true }) {
-                    Text("Очистити історію", color = MaterialTheme.colorScheme.error)
-                }
-            }
-
+        } else {
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.fillMaxSize()
             ) {
                 items(records, key = { it.id }) { record ->
                     ElevatedCard(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onOpenDetails(record) }
+                            .clickable { onRecordClick(record.id) }
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = record.created_at,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    AssistChip(
-                                        onClick = { onOpenDetails(record) },
-                                        label = { Text(record.status) }
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = record.input_summary,
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.bodyLarge
                                 )
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = record.result_summary,
+                                    text = "${record.result_summary} • ${record.status}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
+                                Text(
+                                    text = "Створено: ${record.created_at}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                            TextButton(onClick = { recordIdToDelete = record.id }) {
+                            TextButton(onClick = { onDeleteRecord(record.id) }) {
                                 Text("Видалити", color = MaterialTheme.colorScheme.error)
                             }
                         }
@@ -471,55 +479,80 @@ fun HistoryListScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryDetailsScreen(record: HistoryRecord) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    text = "Збережено: ${record.created_at} • Статус: ${record.status}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Запит: ${record.input_summary}",
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleMedium
-                )
-            }
+fun HistoryDetailScreen(
+    record: HistoryRecord,
+    onBack: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Деталі плану") },
+                navigationIcon = {
+                    TextButton(onClick = onBack) {
+                        Text("← Назад")
+                    }
+                },
+                actions = {
+                    TextButton(onClick = onDelete) {
+                        Text("Видалити", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            )
         }
-
-        PlanIntervalsView(plan = record.plan, modifier = Modifier.weight(1f))
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = record.input_summary,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Дата створення: ${record.created_at}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            HorizontalDivider()
+            PlanIntervalsView(plan = record.plan, modifier = Modifier.weight(1f))
+        }
     }
 }
 
 @Composable
 fun PlanIntervalsView(plan: PlanResponse, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = "План: ${plan.topic} (${plan.total_pomodoros} сетів по 25 хв)",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
+        if (plan.context_applied) {
+            AssistChip(
+                onClick = {},
+                label = { Text("Персоналізовано за вашим контекстом") }
+            )
+        }
 
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(
-                text = "Порада на перерву: ${plan.break_tip}",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(12.dp)
-            )
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "План для теми: ${plan.topic}",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(text = "Кількість Pomodoro-сетів по 25 хв: ${plan.total_pomodoros}")
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Порада для перерви: ${plan.break_tip}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
 
         LazyColumn(
